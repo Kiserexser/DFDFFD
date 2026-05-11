@@ -1,10 +1,12 @@
 {
   "schemaVersion": 1,
-  "id": "killaura",
+  "id": "circleaim",
   "version": "1.0.0",
-  "name": "KillAura",
+  "name": "Circle Aim Assist",
+  "description": "Aim assist with circle radius",
+  "authors": ["Swill"],
   "entrypoints": {
-    "main": ["com.swill.killaura.KillAuraMod"]
+    "client": ["com.swill.killaura.KillAuraMod"]
   },
   "depends": {
     "fabricloader": ">=0.15.11",
