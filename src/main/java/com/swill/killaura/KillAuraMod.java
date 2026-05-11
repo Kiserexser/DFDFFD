@@ -10,61 +10,69 @@ import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.text.Text;
-import net.minecraft.util.Hand;
-import net.minecraft.util.hit.EntityHitResult;
-import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.Box;
-import net.minecraft.util.math.Vec3d;
 import org.lwjgl.glfw.GLFW;
 
 public class KillAuraMod implements ModInitializer {
 
     private static boolean hitboxEnabled = false;
-    private static final double HITBOX_MULTIPLIER = 3.0;
+    private static boolean outlineEnabled = false;
+    private static final double MULTIPLIER = 2.8;
 
     @Override
     public void onInitialize() {
-        KeyBinding toggleHitbox = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-                "Toggle Hitbox (3x)", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_H, "Hitbox Mod"));
+        KeyBinding hitboxKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+                "Hitbox 2.8x", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_H, "Hitbox"));
+        KeyBinding outlineKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+                "ESP Outline", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_L, "Hitbox"));
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
-            if (client.player == null) return;
+            if (client.player == null || client.world == null) return;
 
-            if (toggleHitbox.wasPressed()) {
+            if (hitboxKey.wasPressed()) {
                 hitboxEnabled = !hitboxEnabled;
-                String status = hitboxEnabled ? "§aON (3x)" : "§cOFF";
-                client.player.sendMessage(Text.literal("§7[§c§lH§7] Hitbox " + status), true);
+                client.player.sendMessage(Text.literal("§7[§cH§7] " + (hitboxEnabled ? "§a2.8x ON" : "§cOFF")), true);
+            }
+            if (outlineKey.wasPressed()) {
+                outlineEnabled = !outlineEnabled;
+                client.player.sendMessage(Text.literal("§7[§cL§7] " + (outlineEnabled ? "§aESP ON" : "§cOFF")), true);
             }
 
-            if (!hitboxEnabled) return;
+            if (hitboxEnabled) {
+                for (Entity e : client.world.getEntities()) {
+                    if (e == client.player) continue;
+                    if (!(e instanceof LivingEntity)) continue;
+                    if (e instanceof PlayerEntity p && (p.isCreative() || p.isSpectator())) continue;
 
-            // Обработка левого клика (атака)
-            if (client.options.attackKey.isPressed()) {
-                // Ищем ближайшую цель в радиусе (оригинальный радиус * HITBOX_MULTIPLIER)
-                double range = 3.0 * HITBOX_MULTIPLIER;
-                Entity target = null;
-                double closestDistance = range;
+                    Box orig = e.getBoundingBox();
+                    double width = orig.getXLength() * MULTIPLIER;
+                    double height = orig.getYLength() * MULTIPLIER;
+                    double cx = (orig.minX + orig.maxX) / 2;
+                    double cy = (orig.minY + orig.maxY) / 2;
+                    double cz = (orig.minZ + orig.maxZ) / 2;
+                    e.setBoundingBox(new Box(cx - width/2, cy - height/2, cz - width/2, cx + width/2, cy + height/2, cz + width/2));
+                }
+            }
 
-                for (Entity entity : client.world.getEntities()) {
-                    if (entity == client.player) continue;
-                    if (!(entity instanceof LivingEntity)) continue;
-                    if (entity instanceof PlayerEntity p && p.isCreative()) continue;
-                    if (entity.isSpectator()) continue;
-
-                    double distance = client.player.distanceTo(entity);
-                    if (distance <= closestDistance) {
-                        closestDistance = distance;
-                        target = entity;
+            if (outlineEnabled) {
+                for (Entity e : client.world.getEntities()) {
+                    if (e == client.player) continue;
+                    if (!(e instanceof LivingEntity)) continue;
+                    if (e instanceof PlayerEntity p && (p.isCreative() || p.isSpectator())) continue;
+                    if (client.player.distanceTo(e) <= 9.0) {
+                        // Добавляем glow эффект (работает на 1.20.4)
+                        e.setGlowing(true);
+                        e.setGlowingColor(0xff0000);
+                    } else if (e.isGlowing()) {
+                        e.setGlowing(false);
                     }
                 }
-
-                if (target != null) {
-                    // Имитация удара по реальной цели (сервер видит как обычный удар)
-                    client.interactionManager.attackEntity(client.player, target);
-                    client.player.swingHand(Hand.MAIN_HAND);
-                    
-                    // F3 покажет нормальный урон и хиты
-                    // Обход: мы атакуем реальную сущность, а не воздух
+            } else {
+                // Удаляем свечение при выключении
+                for (Entity e : client.world.getEntities()) {
+                    if (e instanceof LivingEntity && e.isGlowing()) {
+                        e.setGlowing(false);
+                    }
                 }
             }
         });
