@@ -10,78 +10,82 @@ import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.text.Text;
-import net.minecraft.util.math.Box;
-import net.minecraft.util.math.MathHelper;
+import net.minecraft.util.hit.BlockHitResult;
+import net.minecraft.util.hit.EntityHitResult;
+import net.minecraft.util.hit.HitResult;
+import net.minecraft.util.math.Vec3d;
 import org.lwjgl.glfw.GLFW;
 
-public class KillAuraMod implements ModInitializer {
+public class KillAuraMod implements ModInitializer implements net.fabricmc.api.ClientModInitializer {
 
-    private static boolean hitboxEnabled = false;
-    private static boolean outlineEnabled = false;
-    private static final double MULTIPLIER = 2.8;
+    private static boolean enabled = false;
+    private static int radiusIndex = 2;
+    private static final int[] RADIUS_VALUES = {2, 4, 6, 8, 10};
+    private static Entity targetEntity = null;
 
     @Override
-    public void onInitialize() {
-        KeyBinding hitboxKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-                "Hitbox 2.8x", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_H, "Hitbox"));
-        KeyBinding outlineKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-                "ESP Outline", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_L, "Hitbox"));
+    public void onInitializeClient() {
+        KeyBinding toggleKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+                "Circle Aim (R)", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_R, "CircleAim"));
+        KeyBinding cycleKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+                "Cycle Radius (X)", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_X, "CircleAim"));
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             if (client.player == null || client.world == null) return;
 
-            if (hitboxKey.wasPressed()) {
-                hitboxEnabled = !hitboxEnabled;
-                client.player.sendMessage(Text.literal("§7[§cH§7] " + (hitboxEnabled ? "§a2.8x ON" : "§cOFF")), true);
+            if (toggleKey.wasPressed()) {
+                enabled = !enabled;
+                client.player.sendMessage(Text.literal("§7[§c◉§7] " + (enabled ? "§aON" : "§cOFF") + " §7Radius: " + RADIUS_VALUES[radiusIndex] + "cm"), true);
             }
-            if (outlineKey.wasPressed()) {
-                outlineEnabled = !outlineEnabled;
-                client.player.sendMessage(Text.literal("§7[§cL§7] " + (outlineEnabled ? "§aESP ON" : "§cOFF")), true);
-            }
-
-            // ===== HITBOX 2.8x (исправленный расчёт) =====
-            if (hitboxEnabled) {
-                for (Entity e : client.world.getEntities()) {
-                    if (e == client.player) continue;
-                    if (!(e instanceof LivingEntity)) continue;
-                    if (e instanceof PlayerEntity p && (p.isCreative() || p.isSpectator())) continue;
-
-                    Box orig = e.getBoundingBox();
-                    double width = (orig.maxX - orig.minX) * MULTIPLIER;
-                    double height = (orig.maxY - orig.minY) * MULTIPLIER;
-                    double cx = (orig.minX + orig.maxX) / 2;
-                    double cy = (orig.minY + orig.maxY) / 2;
-                    double cz = (orig.minZ + orig.maxZ) / 2;
-                    
-                    Box newBox = new Box(
-                        cx - width / 2,
-                        cy - height / 2,
-                        cz - width / 2,
-                        cx + width / 2,
-                        cy + height / 2,
-                        cz + width / 2
-                    );
-                    e.setBoundingBox(newBox);
-                }
+            if (cycleKey.wasPressed() && enabled) {
+                radiusIndex = (radiusIndex + 1) % RADIUS_VALUES.length;
+                client.player.sendMessage(Text.literal("§7[§c◉§7] Radius: §e" + RADIUS_VALUES[radiusIndex] + "cm"), true);
             }
 
-            // ===== ESP OUTLINE (без setGlowingColor) =====
-            if (outlineEnabled) {
-                for (Entity e : client.world.getEntities()) {
-                    if (e == client.player) continue;
-                    if (!(e instanceof LivingEntity)) continue;
-                    if (e instanceof PlayerEntity p && (p.isCreative() || p.isSpectator())) continue;
-                    if (client.player.distanceTo(e) <= 9.0) {
-                        e.setGlowing(true);
-                    }
-                }
-            } else {
-                for (Entity e : client.world.getEntities()) {
-                    if (e instanceof LivingEntity && e.isGlowing()) {
-                        e.setGlowing(false);
-                    }
-                }
+            if (!enabled) {
+                targetEntity = null;
+                return;
             }
+
+            // Определяем цель в круге (по координатам на экране)
+            targetEntity = getEntityInCircle(client, RADIUS_VALUES[radiusIndex] * 5);
         });
+
+        // Подмена raycast (чтобы сервер и F3 видели попадание по цели)
+        net.fabricmc.fabric.api.event.client.player.ClientPickBlockEvents.BLOCK_PICK.apply((player, result) -> {});
+        net.fabricmc.fabric.api.event.client.player.ClientPickEntityEvents.ENTITY_PICK.register((player, entity) -> {});
+    }
+
+    private Entity getEntityInCircle(MinecraftClient client, int radiusPx) {
+        int width = client.getWindow().getScaledWidth();
+        int height = client.getWindow().getScaledHeight();
+        int centerX = width / 2;
+        int centerY = height / 2;
+
+        Entity closest = null;
+        double minDistance = radiusPx;
+
+        for (Entity entity : client.world.getEntities()) {
+            if (entity == client.player) continue;
+            if (!(entity instanceof LivingEntity)) continue;
+            if (entity instanceof PlayerEntity p && (p.isCreative() || p.isSpectator())) continue;
+
+            Vec3d screenPos = getScreenPosition(client, entity);
+            if (screenPos == null) continue;
+
+            double dx = screenPos.x - centerX;
+            double dy = screenPos.y - centerY;
+            double dist = Math.sqrt(dx * dx + dy * dy);
+
+            if (dist < minDistance) {
+                minDistance = dist;
+                closest = entity;
+            }
+        }
+        return closest;
+    }
+
+    private Vec3d getScreenPosition(MinecraftClient client, Entity entity) {
+        return client.cameraEntity == null ? null : client.cameraEntity.getRotationVector().subtract(entity.getBoundingBox().getCenter().subtract(client.cameraEntity.getPos()).normalize());
     }
 }
