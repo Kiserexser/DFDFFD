@@ -19,5 +19,5 @@ jobs:
       - run: gradle build --no-daemon
       - uses: actions/upload-artifact@v4
         with:
-          name: KillAuraMod-JAR
+          name: HitboxMod-JAR
           path: build/libs/*.jar
