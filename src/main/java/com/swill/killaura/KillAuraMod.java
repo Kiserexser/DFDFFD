@@ -1,6 +1,6 @@
 package com.swill.killaura;
 
-import net.fabricmc.api.ModInitializer;
+import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.minecraft.client.MinecraftClient;
@@ -10,17 +10,17 @@ import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.text.Text;
-import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.hit.EntityHitResult;
 import net.minecraft.util.hit.HitResult;
+import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Vec3d;
 import org.lwjgl.glfw.GLFW;
 
-public class KillAuraMod implements ModInitializer implements net.fabricmc.api.ClientModInitializer {
+public class KillAuraMod implements ClientModInitializer {
 
     private static boolean enabled = false;
     private static int radiusIndex = 2;
-    private static final int[] RADIUS_VALUES = {2, 4, 6, 8, 10};
+    private static final int[] RADIUS_CM = {2, 4, 6, 8, 10};
     private static Entity targetEntity = null;
 
     @Override
@@ -35,11 +35,11 @@ public class KillAuraMod implements ModInitializer implements net.fabricmc.api.C
 
             if (toggleKey.wasPressed()) {
                 enabled = !enabled;
-                client.player.sendMessage(Text.literal("§7[§c◉§7] " + (enabled ? "§aON" : "§cOFF") + " §7Radius: " + RADIUS_VALUES[radiusIndex] + "cm"), true);
+                client.player.sendMessage(Text.literal("§7[§c◉§7] " + (enabled ? "§aON" : "§cOFF") + " §7Radius: " + RADIUS_CM[radiusIndex] + "cm"), true);
             }
             if (cycleKey.wasPressed() && enabled) {
-                radiusIndex = (radiusIndex + 1) % RADIUS_VALUES.length;
-                client.player.sendMessage(Text.literal("§7[§c◉§7] Radius: §e" + RADIUS_VALUES[radiusIndex] + "cm"), true);
+                radiusIndex = (radiusIndex + 1) % RADIUS_CM.length;
+                client.player.sendMessage(Text.literal("§7[§c◉§7] Radius: §e" + RADIUS_CM[radiusIndex] + "cm"), true);
             }
 
             if (!enabled) {
@@ -47,13 +47,9 @@ public class KillAuraMod implements ModInitializer implements net.fabricmc.api.C
                 return;
             }
 
-            // Определяем цель в круге (по координатам на экране)
-            targetEntity = getEntityInCircle(client, RADIUS_VALUES[radiusIndex] * 5);
+            // Поиск цели в круге
+            targetEntity = getEntityInCircle(client, RADIUS_CM[radiusIndex] * 5);
         });
-
-        // Подмена raycast (чтобы сервер и F3 видели попадание по цели)
-        net.fabricmc.fabric.api.event.client.player.ClientPickBlockEvents.BLOCK_PICK.apply((player, result) -> {});
-        net.fabricmc.fabric.api.event.client.player.ClientPickEntityEvents.ENTITY_PICK.register((player, entity) -> {});
     }
 
     private Entity getEntityInCircle(MinecraftClient client, int radiusPx) {
@@ -86,6 +82,19 @@ public class KillAuraMod implements ModInitializer implements net.fabricmc.api.C
     }
 
     private Vec3d getScreenPosition(MinecraftClient client, Entity entity) {
-        return client.cameraEntity == null ? null : client.cameraEntity.getRotationVector().subtract(entity.getBoundingBox().getCenter().subtract(client.cameraEntity.getPos()).normalize());
+        if (client.cameraEntity == null) return null;
+        
+        Vec3d entityPos = entity.getBoundingBox().getCenter();
+        Vec3d cameraPos = client.cameraEntity.getPos();
+        Vec3d dir = entityPos.subtract(cameraPos).normalize();
+        
+        double yaw = Math.toDegrees(Math.atan2(dir.z, dir.x)) - 90;
+        double pitch = -Math.toDegrees(Math.atan2(dir.y, Math.sqrt(dir.x * dir.x + dir.z * dir.z)));
+        
+        double screenX = (yaw / 90) * client.getWindow().getScaledWidth() / 2;
+        double screenY = (pitch / 90) * client.getWindow().getScaledHeight() / 2;
+        
+        return new Vec3d(screenX + client.getWindow().getScaledWidth() / 2, 
+                         client.getWindow().getScaledHeight() / 2 - screenY, 0);
     }
 }
