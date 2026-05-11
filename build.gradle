@@ -4,10 +4,10 @@ plugins {
 }
 
 version = "1.0.0"
-group = "com.swill.killaura"
+group = "com.swill.hitbox"
 
 base {
-    archivesName = "circleaim"
+    archivesName = "hitboxmod"
 }
 
 repositories {
