@@ -10,14 +10,8 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
 import net.minecraft.entity.Entity;
-import net.minecraft.entity.EntityType;
 import net.minecraft.entity.LivingEntity;
-import net.minecraft.entity.data.DataTracker;
-import net.minecraft.entity.data.TrackedData;
-import net.minecraft.entity.mob.ZombieEntity;
 import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
 import net.minecraft.text.Text;
 import net.minecraft.util.Hand;
 import net.minecraft.util.math.Box;
@@ -30,7 +24,6 @@ import java.io.FileWriter;
 import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
 
 public class KillAuraMod implements ModInitializer {
 
@@ -60,7 +53,7 @@ public class KillAuraMod implements ModInitializer {
         }
     }
 
-    private void spawnFakePlayer() {
+    private void spawnFakeTarget() {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.world == null || client.player == null) return;
 
@@ -69,38 +62,28 @@ public class KillAuraMod implements ModInitializer {
             fakeTarget = null;
         }
 
-        // Создаём фейкового игрока (NPC)
-        PlayerEntity dummy = new PlayerEntity(client.world, client.player.getBlockPos(), client.player.getYaw(), new net.minecraft.util.math.GameProfile(UUID.randomUUID(), "§cTraining Dummy")) {
-            @Override
-            public boolean isSpectator() { return false; }
-            @Override
-            public boolean isCreative() { return false; }
-        };
-        
-        dummy.setInvulnerable(false);
-        dummy.setHealth(20.0f);
+        net.minecraft.entity.mob.ZombieEntity dummy = new net.minecraft.entity.mob.ZombieEntity(net.minecraft.entity.EntityType.ZOMBIE, client.world);
         dummy.setCustomName(Text.literal("§c§lTRAINING DUMMY"));
         dummy.setCustomNameVisible(true);
+        dummy.setInvulnerable(false);
+        dummy.setHealth(20.0f);
         dummy.setNoGravity(true);
+        dummy.setAiDisabled(true);
         dummy.setSilent(true);
-        
-        // Копируем скин и предметы с игрока (опционально)
-        dummy.getInventory().clone(client.player.getInventory());
-        dummy.getArmorInventory().clone(client.player.getArmorInventory());
         
         Vec3d pos = client.player.getPos().add(client.player.getRotationVector().multiply(2.5));
         dummy.setPosition(pos.x, pos.y, pos.z);
         
         client.world.addEntity(dummy);
         fakeTarget = dummy;
-        sendMessage("§aTraining player spawned! Hit it to record/replay.");
+        sendMessage("§aTraining dummy spawned! Hit it to record/replay.");
     }
 
-    private void removeFakePlayer() {
+    private void removeFakeTarget() {
         if (fakeTarget != null) {
             fakeTarget.remove(Entity.RemovalReason.DISCARDED);
             fakeTarget = null;
-            sendMessage("§cTraining player removed.");
+            sendMessage("§cTraining dummy removed.");
         }
     }
 
@@ -108,13 +91,13 @@ public class KillAuraMod implements ModInitializer {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.player == null || client.world == null) return null;
 
-        // Сначала проверяем фейк-игрока
+        // Сначала проверяем фейк-моба
         if (fakeTarget instanceof LivingEntity living && living.isAlive()) {
             double dist = client.player.distanceTo(living);
             if (dist <= 4.5) return living;
         }
 
-        // Ищем реальных игроков или мобов в радиусе 4 блока
+        // Ищем ЛЮБЫХ живых существ в радиусе 4 блоков (мобы, животные, игроки)
         Box box = client.player.getBoundingBox().expand(4.0);
         LivingEntity closest = null;
         double closestDist = 4.5;
@@ -124,6 +107,7 @@ public class KillAuraMod implements ModInitializer {
             if (!e.isAlive()) return false;
             if (e.isSpectator()) return false;
             if (e instanceof PlayerEntity p && p.isCreative()) return false;
+            // Убираем фильтр на игроков — атакуем ВСЕХ
             return true;
         })) {
             double dist = client.player.distanceTo(entity);
@@ -154,17 +138,17 @@ public class KillAuraMod implements ModInitializer {
             if (attackCooldown > 0) attackCooldown--;
             if (messageCooldown > 0) messageCooldown--;
 
-            // Клавиша P — спавн/удаление фейк-игрока
+            // Клавиша P — спавн/удаление фейка
             if (spawnKey.wasPressed()) {
-                if (fakeTarget == null) spawnFakePlayer();
-                else removeFakePlayer();
+                if (fakeTarget == null) spawnFakeTarget();
+                else removeFakeTarget();
             }
 
             // Запись
             if (recordKey.wasPressed() && mode != Mode.RECORDING) {
                 mode = Mode.RECORDING;
                 recordedAttacks.clear();
-                sendMessage("§aRECORDING STARTED. Now hit the training player!");
+                sendMessage("§aRECORDING STARTED. Now hit any entity!");
             }
             if (stopKey.wasPressed() && mode == Mode.RECORDING) {
                 mode = Mode.OFF;
@@ -199,14 +183,13 @@ public class KillAuraMod implements ModInitializer {
                 tickCounter = 0;
                 attackCooldown = 4;
                 
-                // Принудительно бьём цель, чтобы мод видел, что удар был
                 LivingEntity target = getNearestTarget();
                 if (target != null) {
                     client.interactionManager.attackEntity(client.player, target);
                     client.player.swingHand(Hand.MAIN_HAND);
                 }
                 
-                sendMessage("§7✧ Recorded attack #" + recordedAttacks.size() + " (delay: " + data.delayTicks + " ticks)");
+                sendMessage("§7✧ Recorded attack #" + recordedAttacks.size());
             }
             wasLeftClickPressed = isLeftClickPressed;
             tickCounter++;
