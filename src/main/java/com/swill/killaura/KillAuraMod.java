@@ -13,6 +13,7 @@ import net.minecraft.sound.SoundEvents;
 import net.minecraft.text.Text;
 import net.minecraft.util.Hand;
 import net.minecraft.util.math.Box;
+import net.minecraft.util.math.Vec3d;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.List;
@@ -21,13 +22,12 @@ public class KillAuraMod implements ModInitializer {
 
     private static boolean enabled = false;
     private static int attackCooldown = 0;
-    private static int animationTick = 0;
     private static float angle = 0;
 
     @Override
     public void onInitialize() {
         KeyBinding toggleKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-                "Toggle KillAura (Flying Sword)",
+                "Toggle KillAura",
                 InputUtil.Type.KEYSYM,
                 GLFW.GLFW_KEY_R,
                 "KillAura"
@@ -36,22 +36,19 @@ public class KillAuraMod implements ModInitializer {
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             if (client.player == null || client.world == null) return;
 
-            // Включение/выключение по R
             if (toggleKey.wasPressed()) {
                 enabled = !enabled;
                 String status = enabled ? "§aENABLED" : "§cDISABLED";
-                client.player.sendMessage(Text.literal("§7[§c⚔️§7] Flying Sword §f" + status), true);
+                client.player.sendMessage(Text.literal("§7[§c⚔️§7] " + status), true);
             }
 
             if (!enabled) return;
 
-            // Задержка между атаками (0.4 секунды = 8 тиков)
             if (attackCooldown > 0) {
                 attackCooldown--;
                 return;
             }
 
-            // Поиск целей в радиусе 4 блока
             Box box = client.player.getBoundingBox().expand(4.0);
             List<LivingEntity> targets = client.world.getEntitiesByClass(LivingEntity.class, box, e -> {
                 if (e == client.player) return false;
@@ -62,37 +59,34 @@ public class KillAuraMod implements ModInitializer {
             });
 
             if (!targets.isEmpty()) {
-                // Атакуем первого в списке
                 LivingEntity target = targets.get(0);
                 
-                // Анимация поворота к цели
-                client.player.lookAt(target);
+                // Поворот к цели (исправленный синтаксис)
+                Vec3d targetPos = target.getPos();
+                double dx = targetPos.x - client.player.getX();
+                double dz = targetPos.z - client.player.getZ();
+                double dy = targetPos.y - client.player.getEyeY();
+                double horizontalDistance = Math.sqrt(dx * dx + dz * dz);
+                float yaw = (float) Math.toDegrees(Math.atan2(dz, dx)) - 90.0f;
+                float pitch = (float) -Math.toDegrees(Math.atan2(dy, horizontalDistance));
+                client.player.setYaw(yaw);
+                client.player.setPitch(pitch);
                 
-                // Удар мечом
+                // Удар
                 client.interactionManager.attackEntity(client.player, target);
                 client.player.swingHand(Hand.MAIN_HAND);
                 
-                // Эффекты летающего меча
+                // Эффекты
                 for (int i = 0; i < 5; i++) {
                     double x = client.player.getX() + Math.cos(angle + i) * 2.5;
                     double z = client.player.getZ() + Math.sin(angle + i) * 2.5;
                     client.world.addParticle(ParticleTypes.SWEEP_ATTACK, 
-                        x, client.player.getY() + 1.5, z, 0, 0, 0);
+                        x, client.player.getY() + 1.0, z, 0, 0, 0);
                 }
                 
-                // Звук удара
                 client.player.playSound(SoundEvents.ENTITY_PLAYER_ATTACK_SWEEP, 1.0f, 1.0f);
-                
-                // Задержка
-                attackCooldown = 8;
-                
-                // Анимация угла
+                attackCooldown = 10;
                 angle += 0.5;
-                
-                // Сообщение в чат (по желанию)
-                if (attackCooldown == 8) {
-                    client.player.sendMessage(Text.literal("§7[§c⚔️§7] §fHit §c" + target.getName().getString()), true);
-                }
             }
         });
     }
