@@ -12,7 +12,6 @@ import net.minecraft.client.util.InputUtil;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityType;
 import net.minecraft.entity.LivingEntity;
-import net.minecraft.entity.damage.DamageSources;
 import net.minecraft.entity.mob.ZombieEntity;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.text.Text;
@@ -27,7 +26,6 @@ import java.io.FileWriter;
 import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
 
 public class KillAuraMod implements ModInitializer {
 
@@ -38,6 +36,7 @@ public class KillAuraMod implements ModInitializer {
     private static int tickCounter = 0;
     private static Entity fakeTarget = null;
     private static int messageCooldown = 0;
+    private static int attackCooldown = 0;
 
     private static class AttackData {
         int delayTicks;
@@ -51,7 +50,7 @@ public class KillAuraMod implements ModInitializer {
     private void sendMessage(String msg) {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.player != null) {
-            client.player.sendMessage(Text.literal("§7[§cKillAura§7] §f" + msg), true);
+            client.player.sendMessage(Text.literal("§7[§cKA§7] §f" + msg), true);
         }
     }
 
@@ -78,100 +77,128 @@ public class KillAuraMod implements ModInitializer {
         
         client.world.addEntity(dummy);
         fakeTarget = dummy;
-        sendMessage("§aTraining dummy spawned! You can hit it and record/replay.");
+        sendMessage("§aDummy spawned!");
     }
 
     private void removeFakePlayer() {
         if (fakeTarget != null) {
             fakeTarget.remove(Entity.RemovalReason.DISCARDED);
             fakeTarget = null;
-            sendMessage("§cTraining dummy removed.");
+            sendMessage("§cDummy removed.");
         }
     }
 
-    private LivingEntity getTarget() {
+    private LivingEntity getNearestTarget() {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.player == null || client.world == null) return null;
 
-        if (fakeTarget instanceof LivingEntity living && living.isAlive() && client.player.distanceTo(living) <= 4.0) {
-            return living;
+        // Сначала проверяем фейк-игрока
+        if (fakeTarget instanceof LivingEntity living && living.isAlive()) {
+            double dist = client.player.distanceTo(living);
+            if (dist <= 4.5) return living;
         }
 
-        Box box = client.player.getBoundingBox().expand(3.0);
-        return client.world.getEntitiesByClass(LivingEntity.class, box,
-                e -> e != client.player && e.isAlive() && !e.isSpectator() && client.player.distanceTo(e) <= 3.0
-        ).stream().findFirst().orElse(null);
+        // Ищем реальных игроков или мобов в радиусе 4 блока
+        Box box = client.player.getBoundingBox().expand(4.0);
+        LivingEntity closest = null;
+        double closestDist = 4.5;
+
+        for (LivingEntity entity : client.world.getEntitiesByClass(LivingEntity.class, box, e -> {
+            if (e == client.player) return false;
+            if (!e.isAlive()) return false;
+            if (e.isSpectator()) return false;
+            if (e instanceof PlayerEntity p && p.isCreative()) return false;
+            return true;
+        })) {
+            double dist = client.player.distanceTo(entity);
+            if (dist < closestDist) {
+                closestDist = dist;
+                closest = entity;
+            }
+        }
+        return closest;
     }
 
     @Override
     public void onInitialize() {
         KeyBinding recordKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-                "Record Aura", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_Y, "KillAura"));
+                "Record", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_Y, "KillAura"));
         KeyBinding stopKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
                 "Stop", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_U, "KillAura"));
         KeyBinding replayKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-                "Replay Aura", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_R, "KillAura"));
+                "Replay", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_R, "KillAura"));
         KeyBinding spawnKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-                "Spawn Dummy", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_P, "KillAura"));
+                "Dummy", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_P, "KillAura"));
 
         loadPattern();
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             if (client.player == null) return;
 
+            if (attackCooldown > 0) attackCooldown--;
             if (messageCooldown > 0) messageCooldown--;
 
+            // Клавиша P — спавн/удаление фейка
             if (spawnKey.wasPressed()) {
                 if (fakeTarget == null) spawnFakePlayer();
                 else removeFakePlayer();
             }
 
+            // Запись
             if (recordKey.wasPressed() && mode != Mode.RECORDING) {
                 mode = Mode.RECORDING;
                 recordedAttacks.clear();
-                sendMessage("§a[RECORDING STARTED] Hit the dummy or players!");
+                sendMessage("§aRECORDING STARTED");
             }
             if (stopKey.wasPressed() && mode == Mode.RECORDING) {
                 mode = Mode.OFF;
                 savePattern();
-                sendMessage("§e[RECORDING STOPPED] Saved " + recordedAttacks.size() + " steps.");
+                sendMessage("§eRECORDING STOPPED (" + recordedAttacks.size() + " steps)");
             }
+
+            // Воспроизведение
             if (replayKey.wasPressed()) {
                 if (mode == Mode.REPLAYING) {
                     mode = Mode.OFF;
-                    sendMessage("§c[REPLAY STOPPED]");
+                    sendMessage("§cREPLAY STOPPED");
                 } else if (!recordedAttacks.isEmpty()) {
                     mode = Mode.REPLAYING;
                     replayIndex = 0;
                     tickCounter = 0;
-                    sendMessage("§a[REPLAY STARTED]");
+                    sendMessage("§aREPLAY STARTED");
                 } else {
-                    sendMessage("§cNo recorded pattern. Press Y first.");
+                    sendMessage("§cNothing recorded. Press Y first.");
                 }
             }
 
-            if (mode == Mode.RECORDING && client.player != null && getTarget() != null) {
+            // Получаем цель
+            LivingEntity target = getNearestTarget();
+
+            // РЕЖИМ ЗАПИСИ — бьём вручную через клик? Нет, просто записываем удары.
+            // Но для нейро-ауры нам нужно записывать, когда ты бьёшь.
+            // Лучше записывать, когда игрок атакует (ЛКМ).
+            if (mode == Mode.RECORDING && client.options.attackKey.wasPressed() && target != null && attackCooldown == 0) {
                 AttackData data = new AttackData();
                 data.delayTicks = tickCounter;
                 data.yaw = client.player.getYaw();
                 data.pitch = client.player.getPitch();
                 recordedAttacks.add(data);
                 tickCounter = 0;
-                if (messageCooldown == 0 && recordedAttacks.size() % 10 == 0) {
-                    sendMessage("§7Recorded " + recordedAttacks.size() + " attacks...");
-                    messageCooldown = 20;
-                }
+                attackCooldown = 4;
+                sendMessage("§7✧ Recorded attack #" + recordedAttacks.size());
             }
+
             tickCounter++;
 
-            if (mode == Mode.REPLAYING && client.player != null && replayIndex < recordedAttacks.size()) {
+            // РЕЖИМ ВОСПРОИЗВЕДЕНИЯ
+            if (mode == Mode.REPLAYING && replayIndex < recordedAttacks.size()) {
                 AttackData data = recordedAttacks.get(replayIndex);
                 if (tickCounter >= data.delayTicks) {
-                    LivingEntity target = getTarget();
-                    if (target != null) {
+                    LivingEntity replayTarget = getNearestTarget();
+                    if (replayTarget != null) {
                         client.player.setYaw(data.yaw);
                         client.player.setPitch(data.pitch);
-                        client.interactionManager.attackEntity(client.player, target);
+                        client.interactionManager.attackEntity(client.player, replayTarget);
                         client.player.swingHand(Hand.MAIN_HAND);
                     }
                     replayIndex++;
@@ -179,12 +206,15 @@ public class KillAuraMod implements ModInitializer {
                 }
             }
 
+            // Статус в игре
             if (messageCooldown == 0) {
-                String status = "";
-                if (mode == Mode.RECORDING) status = "§a● RECORDING";
-                else if (mode == Mode.REPLAYING) status = "§b● REPLAYING";
-                else status = "§7● OFF";
-                client.player.sendMessage(Text.literal("§7[§cKA§7] " + status + " §7| Dummy: " + (fakeTarget != null ? "§a✔" : "§c✘")), true);
+                String status = switch (mode) {
+                    case RECORDING -> "§a● REC";
+                    case REPLAYING -> "§b● RPL";
+                    default -> "§7● OFF";
+                };
+                String dummyStatus = fakeTarget != null ? "§a✔" : "§c✘";
+                client.player.sendMessage(Text.literal("§7[KA] " + status + " §7Dummy:" + dummyStatus), true);
                 messageCooldown = 30;
             }
         });
@@ -193,8 +223,9 @@ public class KillAuraMod implements ModInitializer {
     private void savePattern() {
         try (FileWriter writer = new FileWriter(DATA_FILE)) {
             GSON.toJson(recordedAttacks, writer);
+            System.out.println("[KillAura] Saved " + recordedAttacks.size() + " attacks");
         } catch (Exception e) {
-            System.err.println("[KillAura] Failed to save: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 
@@ -204,9 +235,9 @@ public class KillAuraMod implements ModInitializer {
             Type type = new TypeToken<List<AttackData>>(){}.getType();
             recordedAttacks = GSON.fromJson(reader, type);
             if (recordedAttacks == null) recordedAttacks = new ArrayList<>();
-            System.out.println("[KillAura] Loaded " + recordedAttacks.size() + " steps.");
+            System.out.println("[KillAura] Loaded " + recordedAttacks.size() + " attacks");
         } catch (Exception e) {
-            System.err.println("[KillAura] Failed to load: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 }
