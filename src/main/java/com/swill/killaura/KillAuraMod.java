@@ -12,8 +12,12 @@ import net.minecraft.client.util.InputUtil;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityType;
 import net.minecraft.entity.LivingEntity;
+import net.minecraft.entity.data.DataTracker;
+import net.minecraft.entity.data.TrackedData;
 import net.minecraft.entity.mob.ZombieEntity;
 import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.item.ItemStack;
+import net.minecraft.item.Items;
 import net.minecraft.text.Text;
 import net.minecraft.util.Hand;
 import net.minecraft.util.math.Box;
@@ -26,6 +30,7 @@ import java.io.FileWriter;
 import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 public class KillAuraMod implements ModInitializer {
 
@@ -37,6 +42,7 @@ public class KillAuraMod implements ModInitializer {
     private static Entity fakeTarget = null;
     private static int messageCooldown = 0;
     private static int attackCooldown = 0;
+    private static boolean wasLeftClickPressed = false;
 
     private static class AttackData {
         int delayTicks;
@@ -56,35 +62,45 @@ public class KillAuraMod implements ModInitializer {
 
     private void spawnFakePlayer() {
         MinecraftClient client = MinecraftClient.getInstance();
-        if (client.world == null) return;
+        if (client.world == null || client.player == null) return;
 
         if (fakeTarget != null) {
             fakeTarget.remove(Entity.RemovalReason.DISCARDED);
             fakeTarget = null;
         }
 
-        ZombieEntity dummy = new ZombieEntity(EntityType.ZOMBIE, client.world);
+        // Создаём фейкового игрока (NPC)
+        PlayerEntity dummy = new PlayerEntity(client.world, client.player.getBlockPos(), client.player.getYaw(), new net.minecraft.util.math.GameProfile(UUID.randomUUID(), "§cTraining Dummy")) {
+            @Override
+            public boolean isSpectator() { return false; }
+            @Override
+            public boolean isCreative() { return false; }
+        };
+        
         dummy.setInvulnerable(false);
         dummy.setHealth(20.0f);
         dummy.setCustomName(Text.literal("§c§lTRAINING DUMMY"));
         dummy.setCustomNameVisible(true);
         dummy.setNoGravity(true);
-        dummy.setAiDisabled(true);
         dummy.setSilent(true);
+        
+        // Копируем скин и предметы с игрока (опционально)
+        dummy.getInventory().clone(client.player.getInventory());
+        dummy.getArmorInventory().clone(client.player.getArmorInventory());
         
         Vec3d pos = client.player.getPos().add(client.player.getRotationVector().multiply(2.5));
         dummy.setPosition(pos.x, pos.y, pos.z);
         
         client.world.addEntity(dummy);
         fakeTarget = dummy;
-        sendMessage("§aDummy spawned!");
+        sendMessage("§aTraining player spawned! Hit it to record/replay.");
     }
 
     private void removeFakePlayer() {
         if (fakeTarget != null) {
             fakeTarget.remove(Entity.RemovalReason.DISCARDED);
             fakeTarget = null;
-            sendMessage("§cDummy removed.");
+            sendMessage("§cTraining player removed.");
         }
     }
 
@@ -138,7 +154,7 @@ public class KillAuraMod implements ModInitializer {
             if (attackCooldown > 0) attackCooldown--;
             if (messageCooldown > 0) messageCooldown--;
 
-            // Клавиша P — спавн/удаление фейка
+            // Клавиша P — спавн/удаление фейк-игрока
             if (spawnKey.wasPressed()) {
                 if (fakeTarget == null) spawnFakePlayer();
                 else removeFakePlayer();
@@ -148,7 +164,7 @@ public class KillAuraMod implements ModInitializer {
             if (recordKey.wasPressed() && mode != Mode.RECORDING) {
                 mode = Mode.RECORDING;
                 recordedAttacks.clear();
-                sendMessage("§aRECORDING STARTED");
+                sendMessage("§aRECORDING STARTED. Now hit the training player!");
             }
             if (stopKey.wasPressed() && mode == Mode.RECORDING) {
                 mode = Mode.OFF;
@@ -171,13 +187,10 @@ public class KillAuraMod implements ModInitializer {
                 }
             }
 
-            // Получаем цель
-            LivingEntity target = getNearestTarget();
-
-            // РЕЖИМ ЗАПИСИ — бьём вручную через клик? Нет, просто записываем удары.
-            // Но для нейро-ауры нам нужно записывать, когда ты бьёшь.
-            // Лучше записывать, когда игрок атакует (ЛКМ).
-            if (mode == Mode.RECORDING && client.options.attackKey.wasPressed() && target != null && attackCooldown == 0) {
+            // ЗАПИСЬ АТАК (по нажатию ЛКМ)
+            boolean isLeftClickPressed = client.options.attackKey.isPressed();
+            
+            if (mode == Mode.RECORDING && isLeftClickPressed && !wasLeftClickPressed && attackCooldown == 0) {
                 AttackData data = new AttackData();
                 data.delayTicks = tickCounter;
                 data.yaw = client.player.getYaw();
@@ -185,12 +198,20 @@ public class KillAuraMod implements ModInitializer {
                 recordedAttacks.add(data);
                 tickCounter = 0;
                 attackCooldown = 4;
-                sendMessage("§7✧ Recorded attack #" + recordedAttacks.size());
+                
+                // Принудительно бьём цель, чтобы мод видел, что удар был
+                LivingEntity target = getNearestTarget();
+                if (target != null) {
+                    client.interactionManager.attackEntity(client.player, target);
+                    client.player.swingHand(Hand.MAIN_HAND);
+                }
+                
+                sendMessage("§7✧ Recorded attack #" + recordedAttacks.size() + " (delay: " + data.delayTicks + " ticks)");
             }
-
+            wasLeftClickPressed = isLeftClickPressed;
             tickCounter++;
 
-            // РЕЖИМ ВОСПРОИЗВЕДЕНИЯ
+            // ВОСПРОИЗВЕДЕНИЕ
             if (mode == Mode.REPLAYING && replayIndex < recordedAttacks.size()) {
                 AttackData data = recordedAttacks.get(replayIndex);
                 if (tickCounter >= data.delayTicks) {
@@ -206,7 +227,7 @@ public class KillAuraMod implements ModInitializer {
                 }
             }
 
-            // Статус в игре
+            // Статусная строка
             if (messageCooldown == 0) {
                 String status = switch (mode) {
                     case RECORDING -> "§a● REC";
@@ -214,7 +235,7 @@ public class KillAuraMod implements ModInitializer {
                     default -> "§7● OFF";
                 };
                 String dummyStatus = fakeTarget != null ? "§a✔" : "§c✘";
-                client.player.sendMessage(Text.literal("§7[KA] " + status + " §7Dummy:" + dummyStatus), true);
+                client.player.sendMessage(Text.literal("§7[KA] " + status + " §7Dummy:" + dummyStatus + " §7Attacks: " + recordedAttacks.size()), true);
                 messageCooldown = 30;
             }
         });
