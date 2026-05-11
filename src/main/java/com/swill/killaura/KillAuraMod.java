@@ -1,3 +1,4 @@
+
 package com.swill.killaura;
 
 import net.fabricmc.api.ClientModInitializer;
@@ -72,7 +73,7 @@ public class KillAuraMod implements ClientModInitializer {
             }
         });
 
-        HudRenderCallback.EVENT.register((drawContext, tickDelta) -> {
+        HumCircleRenderCallback.EVENT.register((drawContext, tickDelta) -> {
             if (!enabled) return;
 
             MinecraftClient client = MinecraftClient.getInstance();
@@ -87,14 +88,15 @@ public class KillAuraMod implements ClientModInitializer {
 
     private void drawCircle(DrawContext context, int cx, int cy, int radius) {
         int color = 0xFFFFFFFF;
-        for (int i = 0; i <= 360; i += 10) {
-            double angle1 = Math.toRadians(i);
-            double angle2 = Math.toRadians(i + 10);
-            int x1 = cx + (int)(radius * Math.cos(angle1));
-            int y1 = cy + (int)(radius * Math.sin(angle1));
-            int x2 = cx + (int)(radius * Math.cos(angle2));
-            int y2 = cy + (int)(radius * Math.sin(angle2));
-            context.drawLine(x1, y1, x2, y2, color);
+        // Рисуем круг через fill (квадраты) — это ленивый, но рабочий способ.
+        // Для тонкой линии рисуем только внешние пиксели
+        for (int x = -radius; x <= radius; x++) {
+            for (int y = -radius; y <= radius; y++) {
+                double dist = Math.sqrt(x*x + y*y);
+                if (Math.abs(dist - radius) < 1.0) { // только граница
+                    context.fill(cx + x, cy + y, cx + x + 1, cy + y + 1, color);
+                }
+            }
         }
     }
 
