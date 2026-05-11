@@ -11,6 +11,7 @@ import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.text.Text;
 import net.minecraft.util.math.Box;
+import net.minecraft.util.math.MathHelper;
 import org.lwjgl.glfw.GLFW;
 
 public class KillAuraMod implements ModInitializer {
@@ -38,6 +39,7 @@ public class KillAuraMod implements ModInitializer {
                 client.player.sendMessage(Text.literal("§7[§cL§7] " + (outlineEnabled ? "§aESP ON" : "§cOFF")), true);
             }
 
+            // ===== HITBOX 2.8x (исправленный расчёт) =====
             if (hitboxEnabled) {
                 for (Entity e : client.world.getEntities()) {
                     if (e == client.player) continue;
@@ -45,30 +47,35 @@ public class KillAuraMod implements ModInitializer {
                     if (e instanceof PlayerEntity p && (p.isCreative() || p.isSpectator())) continue;
 
                     Box orig = e.getBoundingBox();
-                    double width = orig.getXLength() * MULTIPLIER;
-                    double height = orig.getYLength() * MULTIPLIER;
+                    double width = (orig.maxX - orig.minX) * MULTIPLIER;
+                    double height = (orig.maxY - orig.minY) * MULTIPLIER;
                     double cx = (orig.minX + orig.maxX) / 2;
                     double cy = (orig.minY + orig.maxY) / 2;
                     double cz = (orig.minZ + orig.maxZ) / 2;
-                    e.setBoundingBox(new Box(cx - width/2, cy - height/2, cz - width/2, cx + width/2, cy + height/2, cz + width/2));
+                    
+                    Box newBox = new Box(
+                        cx - width / 2,
+                        cy - height / 2,
+                        cz - width / 2,
+                        cx + width / 2,
+                        cy + height / 2,
+                        cz + width / 2
+                    );
+                    e.setBoundingBox(newBox);
                 }
             }
 
+            // ===== ESP OUTLINE (без setGlowingColor) =====
             if (outlineEnabled) {
                 for (Entity e : client.world.getEntities()) {
                     if (e == client.player) continue;
                     if (!(e instanceof LivingEntity)) continue;
                     if (e instanceof PlayerEntity p && (p.isCreative() || p.isSpectator())) continue;
                     if (client.player.distanceTo(e) <= 9.0) {
-                        // Добавляем glow эффект (работает на 1.20.4)
                         e.setGlowing(true);
-                        e.setGlowingColor(0xff0000);
-                    } else if (e.isGlowing()) {
-                        e.setGlowing(false);
                     }
                 }
             } else {
-                // Удаляем свечение при выключении
                 for (Entity e : client.world.getEntities()) {
                     if (e instanceof LivingEntity && e.isGlowing()) {
                         e.setGlowing(false);
