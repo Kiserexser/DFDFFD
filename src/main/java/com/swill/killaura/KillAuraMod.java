@@ -21,7 +21,7 @@ public class KillAuraMod implements ClientModInitializer {
     private static boolean targetInCircle = false;
     private static int radiusIndex = 2;
     private static final int[] RADIUS_CM = {2, 4, 6, 8, 10};
-    private static int circleRadiusPx = 20; // 2см = 20px
+    private static int circleRadiusPx = 20;
 
     @Override
     public void onInitializeClient() {
@@ -30,11 +30,7 @@ public class KillAuraMod implements ClientModInitializer {
         KeyBinding cycleKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
                 "Cycle Radius (X)", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_X, "CircleAim"));
 
-        // Обновление радиуса в пикселях при смене см
-        Runnable updateRadius = () -> {
-            circleRadiusPx = RADIUS_CM[radiusIndex] * 10;
-        };
-        updateRadius.run();
+        circleRadiusPx = RADIUS_CM[radiusIndex] * 10;
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             if (client.player == null || client.world == null) return;
@@ -50,10 +46,8 @@ public class KillAuraMod implements ClientModInitializer {
             }
 
             targetInCircle = false;
-
             if (!enabled) return;
 
-            // Проверка: есть ли цель в круге
             int width = client.getWindow().getScaledWidth();
             int height = client.getWindow().getScaledHeight();
             int centerX = width / 2;
@@ -78,7 +72,6 @@ public class KillAuraMod implements ClientModInitializer {
             }
         });
 
-        // Отрисовка круга на экране
         HudRenderCallback.EVENT.register((drawContext, tickDelta) -> {
             if (!enabled) return;
 
@@ -88,24 +81,19 @@ public class KillAuraMod implements ClientModInitializer {
             int centerX = width / 2;
             int centerY = height / 2;
 
-            // Рисуем белый тонкий круг
             drawCircle(drawContext, centerX, centerY, circleRadiusPx);
-
-            // Если цель в круге — лёгкая подсветка (опционально)
-            if (targetInCircle) {
-                drawCircle(drawContext, centerX, centerY, circleRadiusPx + 1);
-            }
         });
     }
 
     private void drawCircle(DrawContext context, int cx, int cy, int radius) {
-        int color = 0xFFFFFFFF; // Белый
-        for (int i = 0; i <= 360; i += 5) {
-            double angle = Math.toRadians(i);
-            int x1 = (int) (cx + radius * Math.cos(angle));
-            int y1 = (int) (cy + radius * Math.sin(angle));
-            int x2 = (int) (cx + radius * Math.cos(Math.toRadians(i + 5)));
-            int y2 = (int) (cy + radius * Math.sin(Math.toRadians(i + 5)));
+        int color = 0xFFFFFFFF;
+        for (int i = 0; i <= 360; i += 10) {
+            double angle1 = Math.toRadians(i);
+            double angle2 = Math.toRadians(i + 10);
+            int x1 = cx + (int)(radius * Math.cos(angle1));
+            int y1 = cy + (int)(radius * Math.sin(angle1));
+            int x2 = cx + (int)(radius * Math.cos(angle2));
+            int y2 = cy + (int)(radius * Math.sin(angle2));
             context.drawLine(x1, y1, x2, y2, color);
         }
     }
